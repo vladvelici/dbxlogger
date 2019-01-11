@@ -34,3 +34,48 @@ An **event** (or log entry) is the claim that *something* happened during the ex
 - and more.
 
 See an example directory structure generated with MLVLogger.
+
+## Support for sub-experiments
+
+This is best explained by an example from my work. I have a `./train.py` script that trains a network and produces, among other things, a checkpoint file `model_best.pth.tar` insisde the experiment folder. Let's say it's in `/storage/my_exp/model_best.pth.tar`. I also have a script called `./squeeze.py` (it's for pruning) that uses the checkpoints from `./train.py` scripts and creates other results... But I want to keep them grouped in a directory structure like the following:
+
+    /storage/
+        my_exp_1/
+        |    meta.json
+        |    log.jsonl
+        |    model_best.tar.pth
+        |    ...
+        |    /squeeze/
+        |    |    subexp_1/
+        |    |    |    meta.json
+        |    |    |    log.jsonl
+        |    |    |    ...
+        |    |    subexp_2/
+        |    |    |    meta.jsonl
+        |    |    |    log.jonl
+        my_exp_2/
+        |    meta.json
+        |    log.jsonl
+        |    model_best.tar.pth
+        |    ...
+        |    /squeeze/
+        |    |    subexp_1/
+        |    |    |    meta.json
+        |    |    |    log.jsonl
+        |    |    |    ...
+        |    |    subexp_2/
+        |    |    |    meta.jsonl
+        |    |    |    log.jonl
+
+This structure is easy to make simply by setting the `savedir` parameter in the sub-experiments to contain the path to the parent experiment followed by `"/squeeze"` (for example `savedir == "/storage/my_exp_1/squeeze/"` and `name == "subexp_1"`). But this is quite lengthy since we already pass the checkpoint path to the `./squeeze.py` script.
+
+To achieve this fairly elegantly, we can add a function:
+
+    import os
+    # ...
+
+    def init_squeeze_exp(checkpoint, name, params):
+        c = os.path.basename(checkpoint)
+        savedir = x[:len(checkpoint)-len(c)]
+        savedir = os.path.join(savedir, "squeeze")
+        return Exp(savedir, name, params, kind="squeeze")

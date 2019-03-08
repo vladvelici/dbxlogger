@@ -5,11 +5,11 @@ with open('README.md') as f:
 
 setup(
     name='mlvlogger',
-    version='0.1',
+    version='0.0.1',
     description='A simple package for structured experiment logs',
     long_description=long_description,
     long_description_content_type='text/markdown',
-    url='http://github.com/densebox/mlvlogger',
+    url='http://github.com/vladvelici/mlvlogger',
     author='Vlad Velici',
     author_email='vlad.velici@gmail.com',
     license='MIT',

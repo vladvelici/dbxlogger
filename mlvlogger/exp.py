@@ -47,14 +47,14 @@ class Exp:
         kind:           the kind (or type) of this experiment
         extra_meta:     any extra key-values to save to meta.json root
                         (not under "params:")
-        environment:    whether to save all the environment variables into "env"
+        env:            whether to save all the environment variables into "env"
                         key in meta.json
         git:            whether to save git information if available: branch,
                         commit, current diff if not everything is commited,
                         remote URL(s) and local repo path
     """
 
-    def __init__(self, savedir, name, params, kind, extra_meta=None, environment=True, git=True):
+    def __init__(self, savedir, name, params, kind, extra_meta=None, env=True, git=True):
         self._savedir = savedir
         self._name = name
         self._params = params
@@ -83,9 +83,25 @@ class Exp:
 
     @property
     def path(self):
-        """The output folder of the experiment."""
+        """Resolved output folder of the experiment.
+
+        Concatenated savedir and name (<savedir>/<name>[_i]). If folder exists
+        an underscore and a number are appended to the folder name to make it
+        unique.
+
+        Folder is not created before write() or create_dirs() methods are
+        called, and the output path will be recalculated. This makes the path
+        property unreliable until after write() or create_dirs() was called.
+        """
         if self._o is None:
-            self._o = self._compute_path()
+            return self._compute_path()
+        return self._o
+
+    @property
+    def final_path(self):
+        """Returns the final path of this experiment. Returns None if called
+        before the final path is known (before write() or create_dirs() was
+        called)."""
         return self._o
 
     @property
@@ -118,7 +134,7 @@ class Exp:
         meta = self._add_extra_meta(meta)
 
     def _add_extram_meta(self, meta):
-        """Mutates the meta, returns it for clarity when it's used."""
+        """Mutates the meta dict, returns it for clarity when it's used."""
 
         if self.extra_meta is not None:
             return meta
@@ -129,7 +145,8 @@ class Exp:
         return meta
 
     def create_dirs(self):
-        os.makedirs(self.path)
+        self._compute_path()
+        os.makedirs(self.final_path)
 
     def get_git(self):
         pass

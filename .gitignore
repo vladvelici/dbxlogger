@@ -10,3 +10,4 @@
 # For now, I use these files in my setup for development:
 Makefile
 rsync_to_phd.sh
+_rsync_file_list

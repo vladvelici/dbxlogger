@@ -4,6 +4,33 @@ This package helps create detailed structured logs for machine learning experime
 
 It does not support python 2.
 
+## State of this project
+
+> This project is quite far from initial release that will be useful.
+
+#### Logger
+
+- [x] create log files using a logger directly.
+- [x] `Logger` object can handle hierarchical events and has useful *navigation* methods.
+- [x] non-blocking log writer using multiprocess
+- [ ] tests for basic logging features
+- [ ] handle `datetime.datetime` objects in log events
+- [ ] easy way to add references to files stored on local filesystem by path
+- [ ] attach files to log events (using a designated file storage mechanism) and store a reference to the file in the log
+- [ ] easy way to add references to other MLV experiments
+- [ ] easy way to add pause/resume events
+
+#### Experiment writer
+
+- [ ] write basic `meta.json` files
+- [ ] compute experiment ID by hashing `meta.json` files
+- [ ] methods to initialise loggers for different LogStreams inside the experiment
+- [x] handle experiment `savedir` and `name`
+- [ ] save environment variables in meta
+- [ ] save git information in meta
+- [ ] support for MLV special attributes in meta (references to files, other experiments, and so on)
+- [ ] clear docs on how to use the `Exp` class
+
 ## What does MLVLogger do?
 
 1. Creates a *standard* directory structure for your machine learning experiments.

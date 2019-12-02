@@ -1,6 +1,14 @@
 import json
 import os
 import multiprocessing
+import threading
+import time
+
+from .encoder import MLVEncoder
+
+def stopwatch():
+    start = time.time()
+    return lambda: time.time()-start
 
 class LogContext:
     """Helper class to keep track of Logger context without polluting the Logger
@@ -40,6 +48,33 @@ class LogContext:
         return locals()
     path = property(**path())
 
+class Event:
+    def __init__(self, full_name, data=None, save_duration=True):
+        self.full_name = full_name
+        if data is None:
+            data = {}
+        self._data = data
+        self._save_duration = save_duration
+        if self._save_duration:
+            self._stopwatch = stopwatch()
+        self._computed = False
+
+    def add(self, data):
+        """Add data to event."""
+        if "duration" in data and self._save_duration:
+            raise Exception("cannot add 'duration' event data and have save_duration True")
+        self._data.update(data)
+
+    def _get_data(self):
+        # don't change data if it already computed, to keep timing ok
+        if self._computed:
+            return self._data
+
+        self._computed = True
+        if self._save_duration:
+            self._data["duration"] = self._stopwatch()
+
+        return self._data
 
 class Logger:
     """
@@ -103,6 +138,10 @@ class Logger:
         self._writer = writer
         self._context = context
 
+    def new_event(self, name, **kwargs):
+        full_name = self.local_event_name(name)
+        return Event(full_name, **kwargs)
+
     @property
     def ctx(self):
         return self._context
@@ -136,7 +175,7 @@ class Logger:
         ctx.root()
         return Logger(writer=self._writer, context=ctx)
 
-    def log(self, event, data):
+    def local_event_name(self, event):
         full_event = []
         full_event.extend(self.ctx.path)
         if type(event) == str:
@@ -147,8 +186,16 @@ class Logger:
         else:
             # assume array of strings
             full_event.extend(event)
-        event = "/".join(full_event)
-        self.writer.log(event, data)
+        return "/".join(full_event)
+
+    def log(self, event, data):
+        if isinstance(event, Event):
+            event.add(data)
+            data = event._get_data()
+            self.writer.log(event.full_name, data)
+        else:
+            event = local_event_name(event)
+            self.writer.log(event, data)
 
     def close(self):
         self.writer.close()
@@ -167,12 +214,17 @@ class LogWriter:
         else:
             self.f = file_path
 
+        self._encoder = MLVEncoder
+
     def log(self, event, data):
         self._log(event, data)
 
     def _log(self, full_event, data):
-        data["event"] = full_event
-        json.dump(f, data, indent=0, sort_keys=True)
+        if "event" in data:
+            del data["event"]
+        encoded = json.dumps(data, sort_keys=True, cls=self._encoder)
+        event_encoded = json.dumps({"event": full_event})
+        print(event_encoded[:-1], ", ", encoded[1:], file=self.f, sep="")
         self.f.flush()
 
     def close(self):
@@ -181,19 +233,63 @@ class LogWriter:
 
 
 class SubprocessLogWriter:
-    def __init__(self, file_path, mode="w"):
+    def __init__(self, file_path, mode="w", writer_class=None):
         """file_path and mode are passed to LogWriter() in another process."""
         self.file_path = file_path
         self.mode = mode
+
+        if writer_class is None:
+            self.writer_class = LogWriter
+        else:
+            self.writer_class = writer_class
+
         self.queue = multiprocessing.Queue(10)
         self.proc = multiprocessing.Process(
             target=SubprocessLogWriter.writer_main,
-            args=(self.file_path, self.mode, self.queue)
+            args=(self.writer_class, self.file_path, self.mode, self.queue)
         )
         self.proc.start()
 
-    def writer_main(file_path, mode, queue):
-        w = LogWriter(file_path, mode)
+    def writer_main(writer_class, file_path, mode, queue):
+        w = writer_class(file_path, mode)
+        for message in queue:
+            if message is None:
+                w.flush()
+                w.close()
+                return
+            event, data = message
+            w.log(event, data)
+
+        # shouldn't get here, but if it does, close the file
+        w.close()
+
+    def log(self, event, data):
+        self.queue.put((event, data))
+
+    def close(self):
+        self.queue.put(None)
+        self.proc.join()
+
+class ThreadLogWriter:
+    def __init__(self, file_path, mode="w", writer_class=None):
+        """file_path and mode are passed to LogWriter() in another process."""
+        self.file_path = file_path
+        self.mode = mode
+
+        if writer_class is None:
+            self.writer_class = LogWriter
+        else:
+            self.writer_class = writer_class
+
+        self.queue = threading.Queue(10)
+        self.thread = threading.Thread(
+            target=ThreadLogWriter.writer_main,
+            args=(self.writer_class, self.file_path, self.mode, self.queue)
+        )
+        self.thread.start()
+
+    def writer_main(writer_class, file_path, mode, queue):
+        w = writer_class(file_path, mode)
         for message in queue:
             if message is None:
                 w.close()

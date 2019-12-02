@@ -1,6 +1,13 @@
 import sys
 import os
 import json
+import datetime
+
+from . import libgit
+from .logger import Logger
+from .encoder import MLVEncoder
+
+import nanoid
 
 RESERVED_KEYS = set([
     "createdAt",
@@ -13,14 +20,11 @@ RESERVED_KEYS = set([
     "_mlv",
 ])
 
+def _generate_random_id():
+    return nanoid.generate(size=10)
+
 def params_from_args(args):
-    return args.to_dict()
-
-def add_git_params(args):
-    pass
-
-def params_from_environment(args):
-    pass
+    return {k: v for k,v in vars(args).items()}
 
 class CustomMetaKeyNotSupportedError(Exception):
     def __init__(self, k):
@@ -34,7 +38,7 @@ class Exp:
 
     The output path of the experiment is a folder resolved by two parameters:
     the experiment name and the name of the experiment. The output path is
-    simply `os.path.join(savedir, name)`.
+    simply `os.path.join(repo, name)` if that path doesn't already exist.
 
     If the experiment output path already exists, a new path is created by
     appending "_N" where N is an auto-increment number starting at 1 to the
@@ -42,7 +46,7 @@ class Exp:
 
     Parameters:
 
-        savedir:        the directory where experiments are saved
+        repo:           the directory where experiments are saved
         name:           the name of this experiment
         kind:           the kind (or type) of this experiment
         extra_meta:     any extra key-values to save to meta.json root
@@ -54,26 +58,62 @@ class Exp:
                         remote URL(s) and local repo path
     """
 
-    def __init__(self, savedir, name, params, kind, extra_meta=None, env=True, git=True):
-        self._savedir = savedir
+    def __init__(self, repo, name, params, kind, extra_meta=None, env=True, git=True):
+        self._id = _generate_random_id()
+        self._repo = repo
         self._name = name
         self._params = params
         self._kind = kind
 
         self.extra_meta = extra_meta
-        self.environment = environment
-        self.git = git
+        self._save_env = env
+        self._save_git = git
 
         # path not computed yet
         self._o = None
 
+        # empty loggers dict
+        self._loggers = {}
+
+    def new_from_args(args, kind, args_to_ignore=None, params=None, extra_meta=None, env=True, git=True):
+        """Shortcut to use savedir and name from command line args.
+
+        Params
+            args: args as returned by argparse
+            kind: experiment kind (string),
+            args_to_ignore: array of arg names not to add as experiment params,
+            params: params to add to the args (overrides ones parsed from args if already exist)
+            extra_meta: extra metadata for the experiment
+        """
+
+        params_ = params_from_args(args)
+        if args_to_ignore is not None:
+            for k in args_to_ignore:
+                del params_[k]
+
+        # remove default args that should not be params (repo and exp name)
+        for k in ["name", "repo"]:
+            del params_[k]
+
+        if params is not None:
+            params_.update(params)
+
+        name = args.name
+        if name is None:
+            # names are in local time. it's easier for users to reason about the
+            # folders this way. All other times are UTC.
+            name = datetime.datetime.now().isoformat()
+            name = name.replace(":", "_") # avoid ':' in paths
+
+        return Exp(args.repo, name, params_, kind, extra_meta, env, git)
+
     def _compute_path(self):
         """Append necessary numbers at the end of the experiment name if
         necessary."""
-        path = os.path.join(self.savedir, self.name)
+        path = os.path.join(self.repo, self.name)
         num = 1
-        while not os.path.exists(path):
-            path = os.path.join(self.savedir, self.name+"_"+num)
+        while os.path.exists(path):
+            path = os.path.join(self.repo, self.name+"_"+str(num))
             num += 1
         return path
 
@@ -82,10 +122,12 @@ class Exp:
         return self._kind
 
     @property
-    def path(self):
-        """Resolved output folder of the experiment.
+    def maybe_path(self):
+        """Resolved output folder of the experiment. If write() or create_dirs()
+        wasn't called it returns the most-likely path, but it might not be the
+        path the experiment gets saved in.
 
-        Concatenated savedir and name (<savedir>/<name>[_i]). If folder exists
+        Concatenated repo and name (<repo>/<name>[_i]). If folder exists
         an underscore and a number are appended to the folder name to make it
         unique.
 
@@ -98,7 +140,7 @@ class Exp:
         return self._o
 
     @property
-    def final_path(self):
+    def path(self):
         """Returns the final path of this experiment. Returns None if called
         before the final path is known (before write() or create_dirs() was
         called)."""
@@ -114,8 +156,14 @@ class Exp:
         return self._name
 
     @property
-    def savedir(self):
-        return self._savedir
+    def repo(self):
+        return self._repo
+
+    @property
+    def params(self):
+        # create a copy of params and return it, so users can't change it via
+        # directly changing this dict
+        return {k: v for k, v in self._params.items}
 
     def write(self):
         self.create_dirs()
@@ -124,19 +172,39 @@ class Exp:
     def write_meta(self):
         # create and write a metafile based on params
         meta = {
+            "id": self._id,
             "createdAt": datetime.datetime.utcnow(),
             "kind": self.kind,
             "cmd": sys.argv,
-            "params": self.params,
+            "params": self._params,
             "name": self.name,
         }
 
         meta = self._add_extra_meta(meta)
 
-    def _add_extram_meta(self, meta):
+        if self._save_env:
+            meta["env"] = self._get_env()
+
+        if self._save_git:
+            git_info = self._get_git()
+            if not git_info:
+                # fail by priting something out on stderr instead of failing the run
+                print("WARN: no git repo found, omitting meta['git']", file=sys.stderr)
+            else:
+                meta["git"] = git_info
+
+        meta_path = os.path.join(self.path, "meta.json")
+
+        with open(meta_path, "w") as f:
+            json.dump(meta, f, indent=4, sort_keys=True, cls=MLVEncoder)
+
+    def path_for(self, file_name):
+        return os.path.join(self.path, file_name)
+
+    def _add_extra_meta(self, meta):
         """Mutates the meta dict, returns it for clarity when it's used."""
 
-        if self.extra_meta is not None:
+        if self.extra_meta is None:
             return meta
         for k, v in self.extra_meta:
             if k in RESERVED_KEYS:
@@ -145,11 +213,49 @@ class Exp:
         return meta
 
     def create_dirs(self):
-        self._compute_path()
-        os.makedirs(self.final_path)
+        self._o = self._compute_path()
+        os.makedirs(self._o)
 
-    def get_git(self):
-        pass
+    def _get_git(self):
+        branch, commit, commit_long, is_git_repo = libgit.current()
+        if not is_git_repo:
+            return None
+        else:
+            uncommited_changes = libgit.has_changes()
+            return {
+                "branch": branch,
+                "commit": commit,
+                "commit_long": commit_long,
+                "uncommited_changes": uncommited_changes,
+            }
 
-    def get_env(self):
-        pass
+    def _get_env(self):
+        return {k: v for k, v in os.environ.items()}
+
+    def _make_logger(self, name):
+        """Create a logger by name. name is assumed to already end with
+        `log.jsonl`."""
+
+        exppath = self.path
+        if exppath is None:
+            raise Exception("cannot initiate logger before calling exp.write()")
+
+        return Logger.new(os.path.join(self.path, name))
+
+    def logger(self, name=None):
+        """Returns a logger instance for the named Log Stream. If name is None
+        (default), the default log stream is used."""
+
+        if name is None or name == "":
+            name = "log.jsonl"
+        else:
+            if not name.endswith("log.jsonl"):
+                name += ".log.jsonl"
+            if "/" in name or "\\" in name:
+                raise Exception("invalid log name %s: log name cannot contain slashes", name)
+
+        if name not in self._loggers:
+            self._loggers[name] = self._make_logger(name)
+
+        # always return a root logger
+        return self._loggers[name].root()

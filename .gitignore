@@ -6,3 +6,7 @@
 
 # Python egg metadata, regenerated from source files by setuptools.
 /*.egg-info
+
+# For now, I use these files in my setup for development:
+Makefile
+rsync_to_phd.sh

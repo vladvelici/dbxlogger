@@ -1,0 +1,11 @@
+Makefile
+rsync_to_phd.sh
+.git
+/data
+/output
+/trained
+/newoutput
+.venv
+venv/
+ENV/
+*.egg-info

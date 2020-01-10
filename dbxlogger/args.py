@@ -1,5 +1,5 @@
 def add_arguments_to(parser):
-    """Add mlv arguments to the given argparse.ArgumentParser.
+    """Add dbx arguments to the given argparse.ArgumentParser.
 
     The arguments are:
         --repo      the path of the repository where experiments are saved

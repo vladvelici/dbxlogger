@@ -11,7 +11,7 @@ import torch.optim as optim
 from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
 
-import mlvlogger as mlv
+import dbxlogger as dbx
 
 class Net(nn.Module):
     def __init__(self):
@@ -79,10 +79,10 @@ def test(log, model, device, test_loader):
 
 def main():
     # Training settings
-    parser = argparse.ArgumentParser(description='PyTorch MNIST Example with mlvlogger')
+    parser = argparse.ArgumentParser(description='PyTorch MNIST Example with dbxlogger')
 
-    # add mlv arguments (-o or --savedir, --name)
-    mlv.add_arguments_to(parser)
+    # add dbx arguments (-o or --savedir, --name)
+    dbx.add_arguments_to(parser)
 
     parser.add_argument('--batch-size', type=int, default=64, metavar='N',
                         help='input batch size for training (default: 64)')
@@ -103,7 +103,7 @@ def main():
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
 
-    exp = mlv.Exp.new_from_args(
+    exp = dbx.Exp.new_from_args(
         args,
         kind="train-simple-cifar",
         args_to_ignore=["no_cuda", "data_path"],

@@ -35,7 +35,7 @@ def current():
     if not is_git_repo:
         return "", "", "", False
 
-    # print("FOUND: commit %s, err %s" % (commit, err))
+    commit = commit.split()[1]
 
     p = subprocess.Popen("git symbolic-ref --short HEAD", shell=True, stdout=subprocess.PIPE)
     branch, err = p.communicate()

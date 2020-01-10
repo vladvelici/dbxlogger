@@ -3,12 +3,14 @@ import os
 import multiprocessing
 import threading
 import time
+from contextlib import contextmanager
 
-from .encoder import MLVEncoder
+from .encoder import DBXEncoder
 
 def stopwatch():
     start = time.time()
     return lambda: time.time()-start
+
 
 class LogContext:
     """Helper class to keep track of Logger context without polluting the Logger
@@ -27,13 +29,16 @@ class LogContext:
                 self._path.append(path)
         else: # assume some iterable
             self._path.extend(path)
+        return self
 
     def parent(self):
         if len(self._path) > 0:
             self._path = self._path[:-1]
+        return self
 
     def root(self):
         self._path.clear()
+        return self
 
     def copy(self):
         return LogContext(self._path)
@@ -48,6 +53,7 @@ class LogContext:
         return locals()
     path = property(**path())
 
+
 class Event:
     def __init__(self, full_name, data=None, save_duration=True):
         self.full_name = full_name
@@ -59,11 +65,29 @@ class Event:
             self._stopwatch = stopwatch()
         self._computed = False
 
-    def add(self, data):
-        """Add data to event."""
-        if "duration" in data and self._save_duration:
-            raise Exception("cannot add 'duration' event data and have save_duration True")
-        self._data.update(data)
+    def delete(self, key):
+        if key in self._data:
+            del self._data[key]
+
+    def add(self, data, v=None):
+        """Add data to event. Can be used to change data too. To delete keys
+        from the event, use `.del(key)`.
+
+        Usage:
+            .add(key, value)        # add one key-value pair
+            .add({ ... })           # add all from given dict
+        """
+        if v is not None:
+            # expecting .add(key, value) call
+            if "duration" == data and self._save_duration:
+                raise Exception("cannot add 'duration' event data and have save_duration True")
+            self._data[data] = v
+        else:
+            # expecting .add(dict) call
+            if "duration" in data and self._save_duration:
+                raise Exception("cannot add 'duration' event data and have save_duration True")
+            self._data.update(data)
+        return self
 
     def _get_data(self):
         # don't change data if it already computed, to keep timing ok
@@ -75,6 +99,7 @@ class Event:
             self._data["duration"] = self._stopwatch()
 
         return self._data
+
 
 class Logger:
     """
@@ -110,6 +135,18 @@ class Logger:
     This second option is useful if you don't want to pass Logger objects to
     methods. The first option is useful if you want to always keep your root
     logger intact and if you typically pass logger objects as arguments.
+
+        for epoch in range(10):
+            with self.log.at("training/epoch/%d" % epoch):
+                self.train_one_epoch()
+
+    Or even simpler
+
+        for epoch in self.log.iter_at(range(10), lambda epoch: "training/epoch/%d" % epoch):
+            # now self.log.ctx == "training/epoch/<epoch>"
+            self.train_one_epoch()
+
+        # self.log.ctx is resumed to root (or whatever it was before the loop)
     """
 
     def new(file_path, mode="w", context=None):
@@ -124,19 +161,32 @@ class Logger:
         w = LogWriter(file_path, mode)
         return Logger(writer=w, context=context)
 
-    def new_subprocess(file_path, mode="w"):
-        """Same as new() but creates a logger that launches the LogWriter on
-        a different process to minimize I/O blocking. See SubprocessLogWriter
-        for details."""
+    def new_subprocess(file_path, mode="w", context=None):
+        """Same as new() but creates a logger that launches the LogWriter on a
+        different process to minimize I/O blocking. See SubprocessLogWriter for
+        details."""
 
         w = SubprocessLogWriter(file_path, mode)
         if context is None:
             context = LogContext()
         return Logger(writer=w, context=context)
 
+    def new_thread(file_path, mode="w", context=None):
+        """Same as new() but creates a logger that launches the LogWriter on a
+        different thread to minimize I/O blocking. See ThreadLogWriter for
+        details."""
+
+        w = ThreadLogWriter(file_path, mode)
+        if context is None:
+            context = LogContext()
+        return Logger(writer=w, context=context)
+
     def __init__(self, writer=None, context=None):
         self._writer = writer
-        self._context = context
+        if context is None:
+            self._context = LogContext()
+        else:
+            self._context = context
 
     def new_event(self, name, **kwargs):
         full_name = self.local_event_name(name)
@@ -194,14 +244,49 @@ class Logger:
             data = event._get_data()
             self.writer.log(event.full_name, data)
         else:
-            event = local_event_name(event)
+            event = self.local_event_name(event)
             self.writer.log(event, data)
 
     def close(self):
         self.writer.close()
 
+    @contextmanager
+    def at(self, path):
+        current_path = [p for p in self.ctx.path]
 
-class LogWriter:
+        if path.startswith("/"):
+            path = path[1:]
+            self.ctx.path = path
+        else:
+            self.ctx.sub(path)
+
+        try:
+            yield
+        finally:
+            self.ctx.path = current_path
+
+    def at_iter(self, iterator, path_lambda_or_fmt):
+        current_path = [p for p in self.ctx.path]
+        for obj in iterator:
+            self.ctx.path = current_path
+
+            if type(path_lambda_or_fmt) == str:
+                path = path_lambda_or_fmt % obj
+            else:
+                path = path_lambda_or_fmt(obj)
+
+
+            if path.startswith("/"):
+                self.ctx.path = path[1:]
+            else:
+                self.ctx.sub(path)
+
+            yield obj
+
+        self.ctx.path = current_path
+
+
+class FileLogWriter:
     def __init__(self, file_path, mode="w"):
         """Create a LogWriter.
 
@@ -214,16 +299,13 @@ class LogWriter:
         else:
             self.f = file_path
 
-        self._encoder = MLVEncoder
+        self._encoder = DBXEncoder
 
-    def log(self, event, data):
-        self._log(event, data)
-
-    def _log(self, full_event, data):
+    def log(self, event_name, data):
         if "event" in data:
             del data["event"]
         encoded = json.dumps(data, sort_keys=True, cls=self._encoder)
-        event_encoded = json.dumps({"event": full_event})
+        event_encoded = json.dumps({"event": event_name})
         print(event_encoded[:-1], ", ", encoded[1:], file=self.f, sep="")
         self.f.flush()
 
@@ -239,7 +321,7 @@ class SubprocessLogWriter:
         self.mode = mode
 
         if writer_class is None:
-            self.writer_class = LogWriter
+            self.writer_class = FileLogWriter
         else:
             self.writer_class = writer_class
 
@@ -271,17 +353,17 @@ class SubprocessLogWriter:
         self.proc.join()
 
 class ThreadLogWriter:
-    def __init__(self, file_path, mode="w", writer_class=None):
+    def __init__(self, file_path, mode="w", writer_class=None, queue_size=10):
         """file_path and mode are passed to LogWriter() in another process."""
         self.file_path = file_path
         self.mode = mode
 
         if writer_class is None:
-            self.writer_class = LogWriter
+            self.writer_class = FileLogWriter
         else:
             self.writer_class = writer_class
 
-        self.queue = threading.Queue(10)
+        self.queue = threading.Queue(queue_size)
         self.thread = threading.Thread(
             target=ThreadLogWriter.writer_main,
             args=(self.writer_class, self.file_path, self.mode, self.queue)

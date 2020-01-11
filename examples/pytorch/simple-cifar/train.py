@@ -149,8 +149,15 @@ def main():
 
         scheduler.step()
 
-    with exp.file("mnist_cnn.pt", "wb") as f:
+    checkpoint = exp.file("mnist_cnn.pt", "wb")
+    with checkpoint as f:
         torch.save(model.state_dict(), f)
+    logger("checkpoint_saved", {"checkpoint": checkpoint})
+
+    # if you're not logging the file, you can simply:
+    #
+    #     with exp.file("mnist_cnn.pt", "wb") as f:
+    #         torch.save(model.state_dict(), f)
 
 def get_current_lr(optimizer):
     """Get the current learning rate from the optimizer."""

@@ -98,18 +98,17 @@ def main():
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=1, metavar='S',
                         help='random seed (default: 1)')
-    parser.add_argument("--data-path", type=str, default="/storage/datasets/")
+    parser.add_argument("--data-path", type=str, default="./data")
 
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
 
-    exp = dbx.Exp.new_from_args(
+    exp = dbx.exp_from_args(
         args,
-        kind="train-simple-cifar",
         args_to_ignore=["no_cuda", "data_path"],
         env=False)
 
-    exp.write()
+    exp.save()
     logger = exp.logger()
 
     torch.manual_seed(args.seed)
@@ -150,7 +149,8 @@ def main():
 
         scheduler.step()
 
-    torch.save(model.state_dict(), exp.path_for("mnist_cnn.pt"))
+    with exp.file("mnist_cnn.pt", "wb") as f:
+        torch.save(model.state_dict(), f)
 
 def get_current_lr(optimizer):
     """Get the current learning rate from the optimizer."""

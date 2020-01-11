@@ -22,9 +22,9 @@ parser.add_argument("--momentum", type=str)
 parser.add_argument("--dropout", type=float)
 args = parser.parse_args()
 
-exp = dbx.Exp.new_from_args(args, kind="fake_exp", env=False)
+exp = dbx.exp_from_args(args, kind="fake_exp", env=False)
 
-exp.write()
+exp.save()
 logger = exp.logger()
 
 # simulate some lr schedule

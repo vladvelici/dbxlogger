@@ -43,4 +43,4 @@ def current():
     p = subprocess.Popen("git log --pretty=fuller -1", shell=True, stdout=subprocess.PIPE)
     commit_long, err = p.communicate()
 
-    return branch.decode(), commit.decode(), commit_long.decode(), is_git_repo
+    return branch.decode().strip(), commit.decode().strip(), commit_long.decode(), is_git_repo

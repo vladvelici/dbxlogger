@@ -1,13 +1,14 @@
-import sys
-import os
-import json
 import datetime
-
-from . import libgit
-from .logger import Logger
-from .encoder import DBXEncoder
+import socket
+import json
+import os
+import sys
 
 import nanoid
+
+from . import libgit
+from .encoder import DBXEncoder
+from .repo import get_repo
 
 RESERVED_KEYS = set([
     "createdAt",
@@ -26,138 +27,162 @@ _ID_ALPHABET = '_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
 def _generate_random_id():
     return nanoid.generate(size=13, alphabet=_ID_ALPHABET)
 
-def params_from_args(args):
-    return {k: v for k,v in vars(args).items()}
-
 class CustomMetaKeyNotSupportedError(Exception):
     def __init__(self, k):
         super().__init__("Custom meta key not supported: %s" % k)
 
+def params_from_args(args):
+    return {k: v for k,v in vars(args).items()}
+
+def exp_from_args(args, kind=None, args_to_ignore=None, params=None, extra_meta=None, env=True, git=True):
+    """Shortcut to use savedir and name from command line args.
+
+    Params
+        args: args as returned by argparse
+        kind: experiment kind (string), if not given it uses the name of the script,
+        args_to_ignore: array of arg names not to add as experiment params,
+        params: params to add to the args (overrides ones parsed from args if already exist)
+        extra_meta: extra metadata for the experiment
+    """
+
+    repo = get_repo(args)
+
+    params_ = params_from_args(args)
+    if args_to_ignore is not None:
+        for k in args_to_ignore:
+            del params_[k]
+
+    # remove default args that should not be params (repo and exp name)
+    for k in ["name", "repo"]:
+        if k in params_:
+            del params_[k]
+
+    if params is not None:
+        params_.update(params)
+
+    name = args.name
+
+    if kind is None:
+        kind = os.path.basename(sys.argv[0])
+
+    return Exp(
+        repo=repo,
+        kind=kind,
+        params=params_,
+        name=name,
+        extra_meta=extra_meta,
+        env=env,
+        git=git)
+
+
 class Exp:
-    """
-    Exp class represents an experiments and provides an API to perform common
-    operations like saving an experiment and creating a logger.
 
-    Exp class works regardless of where the current repo is stored: local or
-    remote via the dbx server.
-
-    Exp class is how you create an experiment that automatically saves all the
-    metadata required, creates all the folder necessary and writes the metadata
-    parameters into a `meta.json` file.
-
-    The output path of the experiment is a folder resolved by two parameters:
-    the experiment name and the name of the experiment. The output path is
-    simply `os.path.join(repo, name, id)` if that path doesn't already exist.
-
-    Experiment names are not necessarily unique. They only aid organisation of
-    experiments within projects.
-
-    Parameters:
-
-        repo:           the directory where experiments are saved
-        name:           the name of this experiment
-        kind:           the kind (or type) of this experiment
-        extra_meta:     any extra key-values to save to meta.json root
-                        (not under "params:"). useful for plugins.
-        env:            whether to save all the environment variables into "env"
-                        key in meta.json
-        git:            whether to save git information if available: branch,
-                        commit, current diff if not everything is commited,
-                        remote URL(s) and local repo path
-    """
-
-    def __init__(self, repo, name, params, kind, extra_meta=None, env=True, git=True):
+    def __init__(self, repo, kind, params=None, name=None, extra_meta=None, env=True, git=True):
         self._id = _generate_random_id()
         self._repo = repo
-        self._name = name
-        if self._name is None:
-            self._name = self._id
-        self._params = params
         self._kind = kind
+        self._name = name
+
+        if params is not None:
+            self._params = params
+        else:
+            self._params = {}
 
         self.extra_meta = extra_meta
         self._save_env = env
         self._save_git = git
 
-        # path not computed yet
-        self._o = None
-
         # empty loggers dict
         self._loggers = {}
 
-    def new_from_args(args, kind=None, args_to_ignore=None, params=None, extra_meta=None, env=True, git=True):
-        """Shortcut to use savedir and name from command line args.
+        # execution environment
+        self._cmd = None
+        self._pwd = None
+        self._script = None
+        self._hostname = None
 
-        Params
-            args: args as returned by argparse
-            kind: experiment kind (string), if not given it uses the name of the script,
-            args_to_ignore: array of arg names not to add as experiment params,
-            params: params to add to the args (overrides ones parsed from args if already exist)
-            extra_meta: extra metadata for the experiment
-        """
+        self._created_at = None
+        self._meta = None
 
-        params_ = params_from_args(args)
-        if args_to_ignore is not None:
-            for k in args_to_ignore:
-                del params_[k]
+        self._files = {}
+        self._saved = False # whether this experiment was saved in the repo
 
-        # remove default args that should not be params (repo and exp name)
-        for k in ["name", "repo"]:
-            del params_[k]
+    @property
+    def id(self):
+        return self._id
 
-        if params is not None:
-            params_.update(params)
+    @property
+    def files(self):
+        return self._files
 
-        name = args.name
+    def cmd():
+        doc = "command to run for this experiment."
+        def fget(self):
+            if self._cmd is None:
+                self._cmd = sys.argv
+            return self._cmd
+        def fset(self, value):
+            self._cmd = value
+        def fdel(self):
+            self._cmd = None
+        return locals()
+    cmd = property(**cmd())
 
-        if kind is None:
-            kind = os.path.basename(sys.argv[0])
+    def pwd():
+        doc = "command to run for this experiment."
+        def fget(self):
+            if self._pwd is None:
+                self._pwd = os.getcwd()
+            return self._pwd
+        def fset(self, value):
+            self._pwd = value
+        def fdel(self):
+            self._pwd = None
+        return locals()
+    pwd = property(**pwd())
 
-        return Exp(args.repo, name, params_, kind, extra_meta, env, git)
+    def script():
+        doc = "script that ran this experiment"
+        def fget(self):
+            if self._script is None:
+                self._script = os.path.abspath(sys.argv[0])
+            return self._script
+        def fset(self, value):
+            self._script = value
+        def fdel(self):
+            del self._script
+        return locals()
+    script = property(**script())
 
-    def _compute_path(self):
-        """Append necessary numbers at the end of the experiment name if
-        necessary."""
-        path = os.path.join(self.repo, self.name)
-        num = 1
-        while os.path.exists(path):
-            path = os.path.join(self.repo, self.name+"_"+str(num))
-            num += 1
-        return path
+    def hostname():
+        doc = "hostname for the running machine"
+        def fget(self):
+            if self._hostname is None:
+                self._hostname = socket.gethostname()
+            return self._hostname
+        def fset(self, value):
+            self._hostname = value
+        def fdel(self):
+            del self._hostname
+        return locals()
+    hostname = property(**hostname())
+
+    def created_at():
+        doc = "date experiment was created - always use UTC timestamps!"
+        def fget(self):
+            if self._created_at is None:
+                self._created_at = datetime.datetime.utcnow()
+            return self._created_at
+        def fset(self, value):
+            self._created_at = value
+        def fdel(self):
+            self._created_at = None
+        return locals()
+    created_at = property(**created_at())
 
     @property
     def kind(self):
         return self._kind
-
-    @property
-    def maybe_path(self):
-        """Resolved output folder of the experiment. If write() or create_dirs()
-        wasn't called it returns the most-likely path, but it might not be the
-        path the experiment gets saved in.
-
-        Concatenated repo and name (<repo>/<name>[_i]). If folder exists
-        an underscore and a number are appended to the folder name to make it
-        unique.
-
-        Folder is not created before write() or create_dirs() methods are
-        called, and the output path will be recalculated. This makes the path
-        property unreliable until after write() or create_dirs() was called.
-        """
-        if self._o is None:
-            return self._compute_path()
-        return self._o
-
-    @property
-    def path(self):
-        """Returns the final path of this experiment. Returns None if called
-        before the final path is known (before write() or create_dirs() was
-        called)."""
-        return self._o
-
-    @property
-    def abspath(self):
-        """The absolute output path of the experiment."""
-        return os.path.abspath(self.path)
 
     @property
     def name(self):
@@ -168,48 +193,58 @@ class Exp:
         return self._repo
 
     @property
+    def meta(self):
+        """Return the meta content (for meta.json). Does not compute it if not
+        already generated."""
+        return self._meta
+
+    @property
     def params(self):
-        # create a copy of params and return it, so users can't change it via
-        # directly changing this dict
-        return {k: v for k, v in self._params.items}
+        # no need to guard it with a copy, since exp.params[k] = v should be
+        # permitted
+        return self._params
 
-    def write(self):
-        self.create_dirs()
-        self.write_meta()
+    def __getitem__(self, k):
+        """Get experiment param shortcut."""
+        return self._params[k]
 
-    def write_meta(self):
-        # create and write a metafile based on params
+    def __setitem__(self, k, v):
+        """Set experiment param shortcut."""
+        self._params[k] = v
+
+    def _compute_meta(self):
         meta = {
             "id": self._id,
-            "createdAt": datetime.datetime.utcnow(),
+            "createdAt": self.created_at,
             "kind": self.kind,
-            "cmd": sys.argv,
             "params": self._params,
             "name": self.name,
+            "cmd": self.cmd,
+            "pwd": self.pwd,
+            "hostname": self.hostname,
+            "script": self.script,
         }
 
         meta = self._add_extra_meta(meta)
 
         if self._save_env:
-            meta["env"] = self._get_env()
+            meta["env"] = _get_env()
 
         if self._save_git:
-            git_info = self._get_git()
+            git_info = _get_git()
             if not git_info:
-                # fail by priting something out on stderr instead of failing the run
+                # print something out on stderr instead of failing the run
                 print("WARN: no git repo found, omitting meta['git']", file=sys.stderr)
             else:
                 meta["git"] = git_info
+
+        self._meta = meta
+        return meta
 
         meta_path = os.path.join(self.path, "meta.json")
 
         with open(meta_path, "w") as f:
             json.dump(meta, f, indent=4, sort_keys=True, cls=DBXEncoder)
-
-    def path_for(self, file_name):
-        """Helper method to get a usable path to the experiment folder, useful
-        for storing ExpFiles."""
-        return os.path.join(self.path, file_name)
 
     def _add_extra_meta(self, meta):
         """Mutates the meta dict and returns it."""
@@ -222,41 +257,20 @@ class Exp:
             meta[k] = v
         return meta
 
-    def create_dirs(self):
-        self._o = self._compute_path()
-        os.makedirs(self._o)
+    def save(self):
+        if self._saved:
+            raise Exception("cannot save experiment twice")
 
-    def _get_git(self):
-        branch, commit, commit_long, is_git_repo = libgit.current()
-        if not is_git_repo:
-            return None
-        else:
-            uncommited_changes = libgit.has_changes()
-            return {
-                "branch": branch,
-                "commit": commit,
-                "commit_long": commit_long,
-                "uncommited_changes": uncommited_changes,
-            }
+        self._compute_meta()
+        self._repo.save(self)
 
-    def _get_env(self):
-        return {k: v for k, v in os.environ.items()}
-
-    def _make_logger(self, name):
-        """Create a logger by name. name is assumed to already end with
-        `log.jsonl`."""
-
-        exppath = self.path
-        if exppath is None:
-            raise Exception("cannot initiate logger before calling exp.write()")
-
-        return Logger.new(os.path.join(self.path, name))
+        self._saved = True
 
     def logger(self, name=None):
-        """Returns a logger instance for the named Log Stream. If name is None
-        (default), the default log stream is used."""
+        if not self._saved:
+            raise Exception("cannot get logger for unsaved experiment")
 
-        if name is None or name == "":
+        if name is None:
             name = "log.jsonl"
         else:
             if not name.endswith("log.jsonl"):
@@ -265,7 +279,59 @@ class Exp:
                 raise Exception("invalid log name %s: log name cannot contain slashes", name)
 
         if name not in self._loggers:
-            self._loggers[name] = self._make_logger(name)
+            logger = self._repo.logger(self, name)
+            self._loggers[name] = logger
+            return logger
 
-        # always return a root logger
         return self._loggers[name].root()
+
+    def file(self, name, mode="w"):
+        if not self._saved:
+            raise Exception("cannot attempt to create a file in unsaved experiment")
+
+        return self._repo.expfile(self, name, mode=mode)
+
+    def filepath(self, name : str):
+        """Create an exp file by name. For local repos it simply gives you the
+        correct path to save an exp file at. For remote repos if there's no
+        local repo used as well, it creates a temp file and returns it.
+
+        After the path has been used, the file is saved as an expfile with the
+        give name.
+
+        Use the `.file()` method as much as possible. This is intended to add
+        compatibility with libraries that only take a path as parameter but not
+        a file descriptor.
+
+        Example:
+
+            with exp.filepath("checkpoint3.tar.pth") as path:
+                model.save(path)
+
+        """
+        raise NotImplementedError()
+
+    def _add_file(self, name, hash):
+        """This method is called after a new file has been added to the
+        experiment."""
+
+        self._files[name] = hash
+        self._repo.save_fileindex(self)
+
+
+def _get_git():
+    branch, commit, commit_long, is_git_repo = libgit.current()
+    if not is_git_repo:
+        return None
+    else:
+        uncommited_changes = libgit.has_changes()
+        return {
+            "branch": branch,
+            "commit": commit,
+            "commit_long": commit_long,
+            "uncommited_changes": uncommited_changes,
+        }
+
+
+def _get_env():
+    return {k: v for k, v in os.environ.items()}

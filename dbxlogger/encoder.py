@@ -3,8 +3,6 @@ import math
 import numbers
 import datetime
 
-from . import dbxtypes
-
 DBXCODE_NAN = "nan"
 DBXCODE_INFINITY = "inf"
 DBXCODE_NEG_INFINITY = "-inf"
@@ -24,10 +22,6 @@ class DBXEncoder(json.JSONEncoder):
 
     def default(self, obj):
 
-        # handle File DBX objects
-        # if isinstance(obj, dbxtypes.File):
-        #     return obj.encodable()
-
         # handle numbers
         if isinstance(obj, numbers.Number):
             if math.isnan(obj):
@@ -41,5 +35,9 @@ class DBXEncoder(json.JSONEncoder):
         # handle dates: make all UTC timestamped with timestamp info removed but encoded with a Z at the end
         if isinstance(obj, datetime.datetime):
             return encode_datetime(obj)
+
+        # many custom loggable objects have a __dbx_encode__ method
+        if hasattr(obj, "__dbx_encode__"):
+            return obj.__dbx_encode__()
 
         return super().default(obj)

@@ -2,15 +2,10 @@ import json
 import os
 import multiprocessing
 import threading
-import time
 from contextlib import contextmanager
 
 from .encoder import DBXEncoder
-
-def stopwatch():
-    start = time.time()
-    return lambda: time.time()-start
-
+from .stopwatch import stopwatch
 
 class LogContext:
     """Helper class to keep track of Logger context without polluting the Logger
@@ -200,7 +195,7 @@ class Logger:
     def writer(self):
         return self._writer
 
-    def __call__(self, event, data):
+    def __call__(self, event, data=None):
         """Handy shortcut for calling .log(event, data)."""
         self.log(event, data)
 
@@ -238,12 +233,15 @@ class Logger:
             full_event.extend(event)
         return "/".join(full_event)
 
-    def log(self, event, data):
+    def log(self, event, data=None):
         if isinstance(event, Event):
-            event.add(data)
+            if data is not None:
+                event.add(data)
             data = event._get_data()
             self.writer.log(event.full_name, data)
         else:
+            if data is None:
+                raise Exception("cannot use None data for inline events")
             event = self.local_event_name(event)
             self.writer.log(event, data)
 

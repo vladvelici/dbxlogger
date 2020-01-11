@@ -318,6 +318,9 @@ class Exp:
         self._files[name] = hash
         self._repo.save_fileindex(self)
 
+    def print_info(self):
+        print("Exp(%s) -> %s" % (self.id, self.repo))
+
 
 def _get_git():
     branch, commit, commit_long, is_git_repo = libgit.current()

@@ -1,6 +1,7 @@
 import os
 import json
 import hashlib
+import socket
 
 from .encoder import DBXEncoder
 from .logger import Logger, FileLogWriter
@@ -8,11 +9,16 @@ from .logger import Logger, FileLogWriter
 def parse_path(path):
     return LocalRepo(path)
 
+
 def get_repo(args):
     # get repo from:
     # 1. args
     # 2. env vars
     # or 3. config file
+
+    # if args is str, then parse it as a repo path
+    if type(args) is str:
+        return parse_path(args)
 
     if args.repo is not None:
         return parse_path(args.repo)
@@ -26,6 +32,7 @@ def get_repo(args):
 
     raise NotImplementedError("config file reading for --repo")
 
+
 # from https://stackoverflow.com/a/44873382/555516
 def sha256sum(filename):
     h  = hashlib.sha256()
@@ -35,6 +42,30 @@ def sha256sum(filename):
         for n in iter(lambda : f.readinto(mv), 0):
             h.update(mv[:n])
     return h.hexdigest()
+
+
+class RefFile:
+    def __init__(self, path : str):
+        self._path = path
+        self._sha256 = None
+
+    @property
+    def sha256(self):
+        if self._sha256 is None:
+            self._sha256 = sha256sum(self.path)
+        return self._sha256
+
+    @property
+    def path(self):
+        return self._path
+
+    def __dbx_encode__(self):
+        return {
+            "_dbx": "reffile",
+            "path": self.path,
+            "hostname": socket.gethostname(),
+            "sha256": self.sha256,
+        }
 
 
 class _ExpFile:

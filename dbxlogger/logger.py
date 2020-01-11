@@ -90,7 +90,7 @@ class Event:
         return self
 
     def _get_data(self):
-        # don't change data if it already computed, to keep timing ok
+        # don't change data if its already computed to keep timing ok
         if self._computed:
             return self._data
 

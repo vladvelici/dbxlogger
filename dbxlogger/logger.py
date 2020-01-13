@@ -142,6 +142,9 @@ class Logger:
             self.train_one_epoch()
 
         # self.log.ctx is resumed to root (or whatever it was before the loop)
+
+    This class is defined in :py:class:`dbxlogger.logger.Logger` but is availabe
+    at :py:class:`dbxlogger.Logger` as a shortcut.
     """
 
     def new(file_path, mode="w", context=None):

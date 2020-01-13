@@ -1,6 +1,7 @@
 import datetime
 
 from dbxlogger.stopwatch import stopwatch
+from dbxlogger import now
 
 import torchbearer
 from torchbearer.callbacks import Callback
@@ -27,7 +28,7 @@ class DbxCallback(Callback):
         return "dbx.integrations.torchbearer.DbxCallback"
 
     def on_start(self, state):
-        self.logger("start", {"timestamp": datetime.datetime.utcnow()})
+        self.logger("start", {"timestamp": now()})
         self._start_stopwatch = stopwatch()
 
     def on_start_epoch(self, state):
@@ -56,6 +57,6 @@ class DbxCallback(Callback):
 
     def on_end(self, state):
         self.logger("done", {
-            "timestamp": datetime.datetime.utcnow(),
+            "timestamp": now(),
             "duration": self._start_stopwatch(),
         })

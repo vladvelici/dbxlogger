@@ -56,6 +56,6 @@ I'm keeping other components of dbx in different repos. They are even earlier st
 
 ## Want to help? Great!
 
-I'm trying to include as much info as possible on future plans and things I'm currently working on in this repo's [issues](/issues), [projects](/projects) and [wiki](/wiki).
+I'm trying to include as much info as possible on future plans and things I'm currently working on in this repo's [issues](https://github.com/vladvelici/dbxlogger/issues), [projects](https://github.com/vladvelici/dbxlogger/projects) and [wiki](https://github.com/vladvelici/dbxlogger/wiki).
 
-If you have any suggestions, bug reports, feature requests please [open a new issue](/issues/new).
+If you have any suggestions, bug reports, feature requests please [open a new issue](https://github.com/vladvelici/dbxlogger/issues/new).

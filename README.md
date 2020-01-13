@@ -45,6 +45,9 @@ Known limitations that needs to be addressed:
 
 I'm not writing tests for this just yet. This is because I'm still changing what all of this is actually supposed to be doing. Writing tests just adds some extra time to iterating over ideas. When the repository format and other things become somewhat stable I'll be adding some tests.
 
+#### Commits directly on master
+
+I'm also doing this for now, since there's not yet a defined plan and work is done all over the place. When things become a little more stable, this will change.
 
 ## Other components of dbx
 

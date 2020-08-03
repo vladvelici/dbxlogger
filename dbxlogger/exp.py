@@ -286,8 +286,9 @@ class Exp:
         return self._loggers[name].root()
 
     def file(self, name, mode="w"):
+        """Create a new file (expfile) for this experiment."""
         if not self._saved:
-            raise Exception("cannot attempt to create a file in unsaved experiment")
+            raise Exception("cannot create a file in unsaved experiment")
 
         return self._repo.expfile(self, name, mode=mode)
 
